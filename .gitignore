@@ -1,0 +1,9 @@
+.venv/
+__pycache__/
+.pytest_cache
+*.md
+!README.md
+data/
+venv/
+__pycache__/
+.pytest_cache/
