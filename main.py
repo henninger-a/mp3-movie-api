@@ -11,15 +11,16 @@ from src import (
     MovieUploadInfo,
     MovieDataResponse,
     MovieProcessingReport,
+    MovieCache
 )
 from src.storage import MOVIE_COLUMNS
-
 
 setup_logging(verbose=True)
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="Data Processing API", version="1.0.0")
 storage = MovieStorage()
+cache = MovieCache()
 app.middleware("http")(log_requests)
 
 @app.get("/health", response_model=HealthResponse)
@@ -49,6 +50,7 @@ async def upload_movies(file: UploadFile = File(...)):
         df = df[MOVIE_COLUMNS]
 
     storage.save(df)
+    cache.invalidate()
     logger.info(f'uploaded movies, filename: {file.filename} rows saved: {len(df)}')
     return MovieUploadInfo(filename=file.filename, rows=len(df), columns=df.shape[1], column_names=df.columns)
     
@@ -56,13 +58,22 @@ async def upload_movies(file: UploadFile = File(...)):
 @app.get("/movies", response_model=MovieDataResponse)
 def get_movies(limit: int = Query(default=100, ge=1)):
     """Return up to limit rows from a stored dataset."""
+    cache_response = cache.get(limit)
+    if cache_response is not None:
+        logger.info(f'retrieved movies, returned_rows: {len(cache_response['data'])}')
+        return cache_response
+
     df = storage.get()
     if df is None:
         return {"data": [], "total_rows": 0}
     records = storage.select_columns(MOVIE_COLUMNS, limit)
     num_movies = storage.count_movies()
+    response = MovieDataResponse(data=records, total_rows=num_movies).model_dump()
+
+    cache.set(limit, response)
+
     logger.info(f'rows count: {num_movies}')
-    return MovieDataResponse(data=records, total_rows=num_movies)
+    return response
 
 
 @app.get("/movies/search", response_model=list[dict])
@@ -92,7 +103,7 @@ def process_movies(config: ProcessConfig):
     numeric_columns = config['validation']['numeric_columns']
     for col in numeric_columns:
         if col not in result.columns.to_list():
-            raise HTTPException( status_code=400, detail="Column not found")
+            raise HTTPException(status_code=400, detail="Column not found")
     try:
         df = validate_dataframe(result, required_columns, numeric_columns)
         rows_removed = len(result) - len(df)
@@ -103,5 +114,6 @@ def process_movies(config: ProcessConfig):
     report = create_cleaning_report(validated_df, processed_df)
     logger.info(f'validation row(s) removed: {rows_removed} processing row(s) removed {len(validated_df) - len(processed_df)}')
     
-    storage.save(validated_df)
-    return {'validation rows removed': rows_removed, 'cleaning report': report}
+    storage.save(processed_df)
+    cache.invalidate()
+    return MovieProcessingReport(validation_rows_removed=rows_removed, cleaning_report=report)

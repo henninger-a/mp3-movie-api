@@ -20,6 +20,8 @@ class MovieStorage:
         try:
             sql_statement = "DELETE FROM movies"
             connection.execute(sql_statement)
+            if 'id' in df.columns.tolist():
+                df = df.drop(columns='id')
             rows = [tuple(inner_list) for inner_list in df.values.tolist()]
             sql_statement = "INSERT INTO movies (title, release_year, rating, genre) VALUES (?, ?, ?, ?)"
             connection.executemany(sql_statement, rows)
@@ -35,10 +37,9 @@ class MovieStorage:
         """Return the four movie columns as a DataFrame, ordered by id."""
         connection = get_connection(self.db_path)
         try:
-            sql_statement = f"SELECT * FROM movies"
+            sql_statement = f"SELECT title, release_year, rating, genre FROM movies ORDER BY id"
             rows = connection.execute(sql_statement,).fetchall()
-            id_movie_columns = MOVIE_COLUMNS.insert(0, 'id')
-            df = pd.DataFrame(rows, columns=id_movie_columns)
+            df = pd.DataFrame(rows, columns=MOVIE_COLUMNS)
             connection.commit()
             return df
         finally:
